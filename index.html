@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>You Are Domynator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="start-screen">
+    <h1>YOU ARE DOMYNATOR</h1>
+    <p class="tag">Conquer two-thirds of the world. Control armies, research weapons, dominate.</p>
+    <div class="picker">
+      <label>Choose your nation:</label>
+      <select id="nation-pick"></select>
+      <button id="start-btn">START GAME</button>
+    </div>
+    <div class="hint">Tip: pick a smaller nation for a real challenge.</div>
+  </div>
+
+  <div id="game-root" class="hidden">
+    <header id="topbar">
+      <div class="brand">DOMYNATOR</div>
+      <div class="resources">
+        <span class="res">DATE <b id="hud-date">--</b></span>
+        <span class="res">$ <b id="hud-money">0</b></span>
+        <span class="res">RESEARCH <b id="hud-research">0</b></span>
+        <span class="res">TROOPS <b id="hud-troops">0</b></span>
+        <span class="res">TERRITORY <b id="hud-territory">0%</b> <span class="goal">/ 66.6%</span></span>
+      </div>
+      <div class="speed">
+        <button data-speed="0">‖</button>
+        <button data-speed="1" class="active">1x</button>
+        <button data-speed="2">2x</button>
+        <button data-speed="5">5x</button>
+      </div>
+    </header>
+
+    <div id="layout">
+      <aside id="sidebar">
+        <div class="panel">
+          <h3>Map View</h3>
+          <div class="view-tabs">
+            <button data-view="political" class="active">Political</button>
+            <button data-view="economy">Economy</button>
+            <button data-view="population">Population</button>
+            <button data-view="oil">Oil</button>
+            <button data-view="diplomacy">Diplomacy</button>
+          </div>
+        </div>
+
+        <div class="panel" id="country-panel">
+          <h3>Selected Country</h3>
+          <div id="country-info" class="info-empty">Click a country on the map.</div>
+          <div id="country-actions" class="actions hidden">
+            <button id="recruit-btn">Recruit (50 troops, $25)</button>
+            <button id="invade-btn" class="danger">Invade Selected Target</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Research</h3>
+          <div id="research-list"></div>
+        </div>
+
+        <div class="panel">
+          <h3>Event Log</h3>
+          <ul id="log"></ul>
+        </div>
+      </aside>
+
+      <main id="map-wrap">
+        <canvas id="map" width="1600" height="900"></canvas>
+        <div id="legend"></div>
+        <div id="tooltip" class="hidden"></div>
+      </main>
+    </div>
+
+    <div id="endgame" class="hidden">
+      <div class="card">
+        <h2 id="end-title">VICTORY</h2>
+        <p id="end-text"></p>
+        <button id="restart-btn">Play Again</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="countries.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
