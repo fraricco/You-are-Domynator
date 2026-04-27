@@ -25,6 +25,27 @@
     log: []
   };
 
+  const TECH_DEFS = {
+    drones: {
+      name: 'Drone Swarms',
+      desc: '+10% attack power per level.',
+      max: 5,
+      cost: lvl => ({ money: 200 + lvl * 100, research: 30 + lvl * 20 })
+    },
+    robots: {
+      name: 'Combat Robots',
+      desc: '+15% attack, -5% attacker losses per level.',
+      max: 5,
+      cost: lvl => ({ money: 350 + lvl * 150, research: 50 + lvl * 30 })
+    },
+    nukes: {
+      name: 'Nuclear Arsenal',
+      desc: '+1 warhead per level. Strike wipes 80% of target troops.',
+      max: 5,
+      cost: lvl => ({ money: 1000 + lvl * 500, research: 200 + lvl * 100 })
+    }
+  };
+
   const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   function daysInMonth(y, m) {
     const d = [31,28,31,30,31,30,31,31,30,31,30,31];
@@ -64,6 +85,8 @@
     state.tech = { drones: 0, robots: 0, nukes: 0 };
     state.nukeStock = 0;
     state.log = [];
+    state.ended = null;
+    document.getElementById('endgame').classList.add('hidden');
 
     // Compute heatmap ranges
     GDP_MAX = 1; POP_MAX = 1;
@@ -78,6 +101,7 @@
     log(`${COUNTRIES[playerId].name} rises. Conquer the world.`, 'good');
     updateLegend();
     updateHUD();
+    updateResearch();
     updateCountryPanel();
     render();
     startLoop();
@@ -214,9 +238,110 @@
         }
       }
     } else {
-      actions.classList.add('hidden');
+      // Foreign country: only the nuke option (if any warhead)
+      if (state.nukeStock > 0) {
+        actions.classList.remove('hidden');
+        const btn = document.createElement('button');
+        btn.className = 'danger';
+        btn.textContent = `☢ Launch Nuke (${state.nukeStock} ready)`;
+        btn.addEventListener('click', () => nuke(id));
+        actions.appendChild(btn);
+      } else {
+        actions.classList.add('hidden');
+      }
     }
   }
+
+  // ---------- Research panel ----------
+  function updateResearch() {
+    const el = document.getElementById('research-list');
+    if (!el) return;
+    el.innerHTML = '';
+    for (const key of ['drones', 'robots', 'nukes']) {
+      const def = TECH_DEFS[key];
+      const lvl = state.tech[key];
+      const card = document.createElement('div');
+      card.className = 'research-item';
+      const pct = (lvl / def.max) * 100;
+      const stockTag = key === 'nukes' ? ` · ${state.nukeStock} ready` : '';
+      card.innerHTML = `
+        <div class="top"><span class="name">${def.name}${stockTag}</span><span class="lvl">L${lvl}/${def.max}</span></div>
+        <div class="desc">${def.desc}</div>
+        <div class="progress"><div class="bar" style="width:${pct}%"></div></div>
+      `;
+      if (lvl < def.max) {
+        const cost = def.cost(lvl);
+        const btn = document.createElement('button');
+        btn.className = 'buy';
+        btn.textContent = `Research L${lvl + 1} — $${cost.money}, ${cost.research} R`;
+        btn.disabled = state.money < cost.money || state.research < cost.research;
+        btn.addEventListener('click', () => buyTech(key));
+        card.appendChild(btn);
+      }
+      el.appendChild(card);
+    }
+  }
+
+  function buyTech(key) {
+    const def = TECH_DEFS[key];
+    const lvl = state.tech[key];
+    if (lvl >= def.max) return;
+    const cost = def.cost(lvl);
+    if (state.money < cost.money || state.research < cost.research) {
+      log('Not enough resources for research.', 'bad');
+      return;
+    }
+    state.money -= cost.money;
+    state.research -= cost.research;
+    state.tech[key] = lvl + 1;
+    if (key === 'nukes') state.nukeStock += 1;
+    log(`Researched ${def.name} L${lvl + 1}.`, 'good');
+    updateHUD(); updateResearch(); updateCountryPanel();
+  }
+
+  function nuke(id) {
+    if (state.nukeStock <= 0) return;
+    if (state.cstate[id].owner === state.player) return;
+    state.nukeStock -= 1;
+    const before = state.cstate[id].troops;
+    state.cstate[id].troops = Math.max(0, Math.round(before * 0.2));
+    log(`☢ Nuclear strike on ${COUNTRIES[id].name}: troops ${before} → ${state.cstate[id].troops}.`, 'bad');
+    updateHUD(); updateResearch(); updateCountryPanel(); render();
+    checkEndgame();
+  }
+
+  // ---------- Endgame ----------
+  function checkEndgame() {
+    if (state.ended) return;
+    const t = territoryStats();
+    if (t.pct >= 66.6) { state.ended = 'victory'; showEndgame(true, t); return; }
+    let playerCount = 0;
+    for (const id in state.cstate) if (state.cstate[id].owner === state.player) playerCount++;
+    if (playerCount === 0 || state.cstate[state.player].owner !== state.player) {
+      state.ended = 'defeat'; showEndgame(false, t);
+    }
+  }
+
+  function showEndgame(victory, t) {
+    state.speed = 0;
+    document.querySelectorAll('.speed button').forEach(b =>
+      b.classList.toggle('active', b.dataset.speed === '0'));
+    const el = document.getElementById('endgame');
+    el.classList.remove('hidden');
+    el.classList.toggle('defeat', !victory);
+    document.getElementById('end-title').textContent = victory ? 'VICTORY' : 'DEFEAT';
+    document.getElementById('end-text').textContent = victory
+      ? `You conquered ${t.pct.toFixed(1)}% of the conquerable world. Domynator achieved.`
+      : `Your empire collapsed. Final territory: ${t.pct.toFixed(1)}%.`;
+  }
+
+  document.getElementById('restart-btn').addEventListener('click', () => {
+    document.getElementById('endgame').classList.add('hidden');
+    state.started = false;
+    state.ended = null;
+    document.getElementById('game-root').classList.add('hidden');
+    document.getElementById('start-screen').classList.remove('hidden');
+  });
 
   function flagMiniHtml(flag) {
     return `<span class="flag-mini" style="background:${flagCssGradient(flag)}"></span>`;
@@ -496,7 +621,7 @@
     if (!state.started) return;
     const dt = ts - lastFrame;
     lastFrame = ts;
-    if (state.speed > 0) {
+    if (state.speed > 0 && !state.ended) {
       // 1x = 2 days/sec, 2x = 4 days/sec, 5x = 10 days/sec
       const daysPerSec = state.speed * 2;
       dayAccum += (dt / 1000) * daysPerSec;
@@ -534,7 +659,9 @@
     state.money += income;
     state.research += research;
     if (state.selected) updateCountryPanel();
+    updateResearch();
     log(`${MONTHS[state.date.month - 1]} ${state.date.year}: +$${income}  +${research} research`);
+    checkEndgame();
   }
 
   // ---------- HUD ----------
@@ -638,7 +765,13 @@
       tgt.troops = survivors;
       log(`Invasion of ${COUNTRIES[tgtId].name} repelled. Lost ${N} troops.`, 'bad');
     }
-    updateHUD(); updateCountryPanel(); render();
+    // Robots reduce attacker losses on win or loss alike: refund some troops.
+    if (state.tech.robots > 0) {
+      const refund = Math.round(N * 0.05 * state.tech.robots);
+      src.troops += refund;
+    }
+    updateHUD(); updateCountryPanel(); updateResearch(); render();
+    checkEndgame();
   }
 
   // ---------- Log ----------
