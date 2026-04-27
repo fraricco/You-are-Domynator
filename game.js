@@ -86,6 +86,8 @@
     state.nukeStock = 0;
     state.log = [];
     state.ended = null;
+    state.warWith = {};
+    state.aiTickCounter = 0;
     document.getElementById('endgame').classList.add('hidden');
 
     // Compute heatmap ranges
@@ -302,12 +304,76 @@
   function nuke(id) {
     if (state.nukeStock <= 0) return;
     if (state.cstate[id].owner === state.player) return;
+    state.warWith[state.cstate[id].owner] = true;
     state.nukeStock -= 1;
     const before = state.cstate[id].troops;
     state.cstate[id].troops = Math.max(0, Math.round(before * 0.2));
     log(`☢ Nuclear strike on ${COUNTRIES[id].name}: troops ${before} → ${state.cstate[id].troops}.`, 'bad');
     updateHUD(); updateResearch(); updateCountryPanel(); render();
     checkEndgame();
+  }
+
+  // ---------- AI ----------
+  function aiTick() {
+    const factions = {};
+    for (const id in state.cstate) {
+      const o = state.cstate[id].owner;
+      if (o === state.player) continue;
+      (factions[o] = factions[o] || []).push(id);
+    }
+    for (const owner in factions) {
+      const territories = factions[owner];
+      // Recruit pass: organic growth, weighted by GDP of territory
+      for (const id of territories) {
+        const c = COUNTRIES[id];
+        if (Math.random() < 0.30) {
+          state.cstate[id].troops += 20 + Math.floor(Math.random() * 30) + Math.floor(c.gdp / 600);
+        }
+      }
+      // Attack pass: probability per territory; pick weakest adjacent
+      for (const id of territories) {
+        if (Math.random() > 0.10) continue;
+        const adj = ADJ[id] || [];
+        const targets = adj.filter(a => state.cstate[a].owner !== owner);
+        if (!targets.length) continue;
+        targets.sort((a, b) => state.cstate[a].troops - state.cstate[b].troops);
+        const tgtId = targets[0];
+        const N = state.cstate[id].troops - 50;
+        if (N < 60) continue;
+        const T = state.cstate[tgtId].troops;
+        const ratio = N / Math.max(1, T);
+        // AI is more cautious vs the player
+        const minRatio = state.cstate[tgtId].owner === state.player ? 1.5 : 1.1;
+        if (ratio < minRatio) continue;
+        aiInvade(owner, id, tgtId, N);
+      }
+    }
+  }
+
+  function aiInvade(owner, srcId, tgtId, N) {
+    const src = state.cstate[srcId];
+    const tgt = state.cstate[tgtId];
+    const T = tgt.troops;
+    const atkRoll = N * (0.8 + Math.random() * 0.4);
+    const defRoll = T * 1.25 * (0.8 + Math.random() * 0.4);
+    const tgtWasPlayer = tgt.owner === state.player;
+    src.troops -= N;
+    if (atkRoll > defRoll) {
+      const remaining = Math.max(15, Math.round((atkRoll - defRoll) * 0.5));
+      tgt.owner = owner;
+      tgt.troops = remaining;
+      if (tgtWasPlayer) {
+        state.warWith[owner] = true;
+        log(`${COUNTRIES[owner].name} captured ${COUNTRIES[tgtId].name}!`, 'bad');
+      }
+    } else {
+      const survivors = Math.max(15, Math.round((defRoll - atkRoll * 0.7) / 1.25));
+      tgt.troops = survivors;
+      if (tgtWasPlayer) {
+        state.warWith[owner] = true;
+        log(`Repelled ${COUNTRIES[owner].name}'s assault on ${COUNTRIES[tgtId].name}.`, 'good');
+      }
+    }
   }
 
   // ---------- Endgame ----------
@@ -453,7 +519,7 @@
     }
     if (state.view === 'diplomacy') {
       if (cs.owner === state.player) return '#22c55e';
-      // Wars in Task 3; for now non-player territory is neutral
+      if (state.warWith && state.warWith[cs.owner]) return '#dc2626';
       return '#475569';
     }
     return owner.color;
@@ -644,6 +710,12 @@
       if (d.month > 12) { d.month = 1; d.year += 1; }
       advanceMonth();
     }
+    state.aiTickCounter += 1;
+    if (state.aiTickCounter >= 3) {
+      state.aiTickCounter = 0;
+      aiTick();
+      checkEndgame();
+    }
   }
 
   function advanceMonth() {
@@ -722,7 +794,8 @@
     } else if (state.view === 'diplomacy') {
       html = `<div><b>Diplomacy</b></div>` +
         sw('#22c55e', 'Your territory') +
-        sw('#475569', 'Neutral / not at war');
+        sw('#dc2626', 'At war') +
+        sw('#475569', 'Neutral');
     }
     el.innerHTML = html;
   }
@@ -753,6 +826,9 @@
     const atkMult = 1 + 0.10 * tech.drones + 0.15 * tech.robots;
     const atkRoll = N * atkMult * (0.8 + Math.random() * 0.4);
     const defRoll = T * 1.25 * (0.8 + Math.random() * 0.4);
+
+    const originalOwner = tgt.owner;
+    state.warWith[originalOwner] = true;
 
     src.troops = garrison;
     if (atkRoll > defRoll) {
