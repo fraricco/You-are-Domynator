@@ -261,6 +261,63 @@ function polygonArea(poly) {
   return Math.abs(a) / 2;
 }
 
+// ---------- Coastline detail ----------
+// The hand-defined polygons are blocky. We subdivide each edge with
+// deterministic perpendicular noise and smooth with one Chaikin pass
+// so coastlines look more like real countries while staying stable
+// across reloads (noise is hashed from vertex position, not Math.random).
+function hashNoise(x, y) {
+  const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+function irregularize(poly, segs, amp) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i];
+    const [x2, y2] = poly[(i + 1) % poly.length];
+    out.push([x1, y1]);
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.01) continue;
+    const nx = -dy / len, ny = dx / len; // unit perpendicular
+    for (let j = 1; j < segs; j++) {
+      const t = j / segs;
+      const px = x1 + dx * t;
+      const py = y1 + dy * t;
+      const n1 = hashNoise(px * 0.07, py * 0.07) - 0.5;
+      const n2 = hashNoise(px * 0.23 + 100, py * 0.23 + 100) - 0.5;
+      const n = n1 * 0.7 + n2 * 0.3;                   // layered, [-0.5..0.5]
+      const cap = Math.min(len * 0.22, 11);
+      const off = n * 2 * amp * cap;
+      out.push([px + nx * off, py + ny * off]);
+    }
+  }
+  return out;
+}
+
+function chaikin(poly) {
+  const out = [];
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i];
+    const [x2, y2] = poly[(i + 1) % poly.length];
+    out.push([x1 + (x2 - x1) * 0.25, y1 + (y2 - y1) * 0.25]);
+    out.push([x1 + (x2 - x1) * 0.75, y1 + (y2 - y1) * 0.75]);
+  }
+  return out;
+}
+
+for (const id in COUNTRIES) {
+  // Smaller polygons (islands) get gentler noise so they don't deform
+  const base = COUNTRIES[id].polygon;
+  const baseArea = polygonArea(base);
+  const amp = baseArea < 1500 ? 0.45 : 0.7;
+  let p = irregularize(base, 4, amp);
+  p = chaikin(p);
+  p = chaikin(p); // second pass softens stair-stepping from the noise
+  COUNTRIES[id].polygon = p;
+}
+
 for (const id in COUNTRIES) {
   COUNTRIES[id].id = id;
   COUNTRIES[id].area = polygonArea(COUNTRIES[id].polygon);
