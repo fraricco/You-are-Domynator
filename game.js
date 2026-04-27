@@ -165,29 +165,57 @@
   // ---------- Country info panel ----------
   function updateCountryPanel() {
     const info = document.getElementById('country-info');
+    const actions = document.getElementById('country-actions');
     if (!state.selected) {
       info.className = 'info-empty';
       info.textContent = 'Click a country on the map.';
+      actions.classList.add('hidden');
+      actions.innerHTML = '';
       return;
     }
-    const c = COUNTRIES[state.selected];
-    const cs = state.cstate[state.selected];
+    const id = state.selected;
+    const c = COUNTRIES[id];
+    const cs = state.cstate[id];
     const owner = COUNTRIES[cs.owner];
     info.className = '';
     info.innerHTML = `
       <div class="name">${flagMiniHtml(owner.flag)} ${c.name}</div>
       <div class="row"><span>Owner</span><b>${owner.name}</b></div>
-      <div class="row"><span>Capital</span><b>${capitalName(c)}</b></div>
       <div class="row"><span>Troops</span><b>${cs.troops}</b></div>
       <div class="row"><span>Population</span><b>${c.pop} M</b></div>
       <div class="row"><span>GDP</span><b>$${c.gdp} B</b></div>
       <div class="row"><span>Oil</span><b>${c.oil}</b></div>
     `;
-  }
 
-  function capitalName(c) {
-    // No explicit capital names in data yet; use country name + " (cap.)" placeholder.
-    return c.name + ' capital';
+    actions.innerHTML = '';
+    if (cs.owner === state.player) {
+      actions.classList.remove('hidden');
+      const recruitBtn = document.createElement('button');
+      recruitBtn.textContent = `Recruit +50 troops ($25)`;
+      recruitBtn.disabled = state.money < 25;
+      recruitBtn.addEventListener('click', () => recruit(id));
+      actions.appendChild(recruitBtn);
+
+      const adj = ADJ[id] || [];
+      const enemies = adj.filter(a => state.cstate[a].owner !== state.player);
+      if (enemies.length) {
+        const heading = document.createElement('div');
+        heading.style.cssText = 'font-size:.7rem;color:#9aa6b8;margin-top:.5rem;letter-spacing:.12em;';
+        heading.textContent = 'INVADE NEIGHBOR';
+        actions.appendChild(heading);
+        for (const eId of enemies) {
+          const btn = document.createElement('button');
+          btn.className = 'danger';
+          const defT = state.cstate[eId].troops;
+          btn.textContent = `${COUNTRIES[eId].name} · ${defT} def.`;
+          btn.disabled = cs.troops <= 100;
+          btn.addEventListener('click', () => invade(id, eId));
+          actions.appendChild(btn);
+        }
+      }
+    } else {
+      actions.classList.add('hidden');
+    }
   }
 
   function flagMiniHtml(flag) {
@@ -232,10 +260,29 @@
       drawTerritoryFlag(id);
     }
 
-    // Selection highlight
+    // Selection highlight + adjacent enemy markers
     if (state.selected) {
+      const sel = state.cstate[state.selected];
+      if (sel.owner === state.player) {
+        const adj = ADJ[state.selected] || [];
+        for (const eId of adj) {
+          if (state.cstate[eId].owner !== state.player) drawTargetHighlight(eId);
+        }
+      }
       drawSelection(state.selected);
     }
+  }
+
+  function drawTargetHighlight(id) {
+    const c = COUNTRIES[id];
+    ctx.save();
+    ctx.beginPath();
+    pathPolygon(c.polygon);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 80, 80, 0.9)';
+    ctx.setLineDash([5, 4]);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawOcean() {
@@ -551,6 +598,47 @@
         sw('#475569', 'Neutral / not at war');
     }
     el.innerHTML = html;
+  }
+
+  // ---------- Player actions ----------
+  function recruit(id) {
+    if (state.cstate[id].owner !== state.player) return;
+    if (state.money < 25) { log('Not enough money to recruit.', 'bad'); return; }
+    state.money -= 25;
+    state.cstate[id].troops += 50;
+    log(`Recruited 50 troops in ${COUNTRIES[id].name}.`);
+    updateHUD(); updateCountryPanel(); render();
+  }
+
+  function invade(srcId, tgtId) {
+    const src = state.cstate[srcId];
+    const tgt = state.cstate[tgtId];
+    if (src.owner !== state.player) return;
+    if (tgt.owner === state.player) return;
+    if (!ADJ[srcId] || !ADJ[srcId].includes(tgtId)) return;
+
+    const garrison = 50;
+    const N = src.troops - garrison;
+    if (N < 50) { log(`Not enough troops in ${COUNTRIES[srcId].name} (need >100).`, 'bad'); return; }
+
+    const T = tgt.troops;
+    const tech = state.tech;
+    const atkMult = 1 + 0.10 * tech.drones + 0.15 * tech.robots;
+    const atkRoll = N * atkMult * (0.8 + Math.random() * 0.4);
+    const defRoll = T * 1.25 * (0.8 + Math.random() * 0.4);
+
+    src.troops = garrison;
+    if (atkRoll > defRoll) {
+      const remaining = Math.max(20, Math.round((atkRoll - defRoll) / atkMult * 0.6));
+      tgt.owner = state.player;
+      tgt.troops = remaining;
+      log(`Conquered ${COUNTRIES[tgtId].name}! ${remaining} troops occupy.`, 'good');
+    } else {
+      const survivors = Math.max(30, Math.round((defRoll - atkRoll * 0.7) / 1.25));
+      tgt.troops = survivors;
+      log(`Invasion of ${COUNTRIES[tgtId].name} repelled. Lost ${N} troops.`, 'bad');
+    }
+    updateHUD(); updateCountryPanel(); render();
   }
 
   // ---------- Log ----------
