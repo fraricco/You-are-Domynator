@@ -88,6 +88,7 @@
     state.ended = null;
     state.warWith = {};
     state.aiTickCounter = 0;
+    state.effects = [];
     document.getElementById('endgame').classList.add('hidden');
 
     // Compute heatmap ranges
@@ -308,6 +309,8 @@
     state.nukeStock -= 1;
     const before = state.cstate[id].troops;
     state.cstate[id].troops = Math.max(0, Math.round(before * 0.2));
+    const tc = COUNTRIES[id];
+    addEffect({ type: 'nuke', x: tc.capital[0], y: tc.capital[1], ttl: 80 });
     log(`☢ Nuclear strike on ${COUNTRIES[id].name}: troops ${before} → ${state.cstate[id].troops}.`, 'bad');
     updateHUD(); updateResearch(); updateCountryPanel(); render();
     checkEndgame();
@@ -364,6 +367,8 @@
       tgt.troops = remaining;
       if (tgtWasPlayer) {
         state.warWith[owner] = true;
+        const tc = COUNTRIES[tgtId];
+        addEffect({ type: 'conquest', x: tc.cx, y: tc.cy, rgb: '239,68,68', ttl: 70 });
         log(`${COUNTRIES[owner].name} captured ${COUNTRIES[tgtId].name}!`, 'bad');
       }
     } else {
@@ -462,6 +467,46 @@
       }
       drawSelection(state.selected);
     }
+
+    drawEffects();
+  }
+
+  // ---------- Effects ----------
+  function addEffect(e) {
+    state.effects.push(Object.assign({ age: 0, ttl: 60 }, e));
+  }
+  function tickEffects() {
+    for (const e of state.effects) e.age += 1;
+    if (state.effects.length) {
+      state.effects = state.effects.filter(e => e.age < e.ttl);
+    }
+  }
+  function drawEffects() {
+    for (const e of state.effects) {
+      const t = e.age / e.ttl;
+      if (e.type === 'conquest') {
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, 18 + t * 60, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${e.rgb || '255,215,0'}, ${(1 - t).toFixed(2)})`;
+        ctx.lineWidth = 4 * (1 - t) + 1;
+        ctx.stroke();
+      } else if (e.type === 'nuke') {
+        const r = 8 + t * 110;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 90, 30, ${(0.45 * (1 - t)).toFixed(2)})`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r * 0.6, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 240, 140, ${(0.7 * (1 - t)).toFixed(2)})`;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255, 200, 80, ${(1 - t).toFixed(2)})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
   }
 
   function drawTargetHighlight(id) {
@@ -557,21 +602,44 @@
   function drawCapital(id) {
     const c = COUNTRIES[id];
     const [x, y] = c.capital;
-    const isPlayerCap = state.cstate[id].owner === state.player && id === state.player;
+    const ownedByPlayer = state.cstate[id].owner === state.player;
+    const isHomeCapital = id === state.player;
     ctx.beginPath();
-    ctx.arc(x, y, isPlayerCap ? 5 : 3, 0, Math.PI * 2);
-    ctx.fillStyle = isPlayerCap ? '#ffd700' : '#fff';
+    ctx.arc(x, y, ownedByPlayer ? 4 : 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = ownedByPlayer ? '#ffd700' : '#fff';
     ctx.fill();
     ctx.lineWidth = 1;
     ctx.strokeStyle = '#000';
     ctx.stroke();
-    if (isPlayerCap) {
+    if (ownedByPlayer) {
+      const pulse = 0.4 + 0.3 * Math.sin(performance.now() / 300);
       ctx.beginPath();
-      ctx.arc(x, y, 9, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,215,0,0.6)';
-      ctx.lineWidth = 2;
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,215,0,${pulse.toFixed(2)})`;
+      ctx.lineWidth = 1.5;
       ctx.stroke();
     }
+    if (isHomeCapital) {
+      // Five-pointed star marker on the home capital
+      drawStar(x, y - 14, 5, 6, 3, '#ffd700');
+    }
+  }
+
+  function drawStar(cx, cy, points, outer, inner, fill) {
+    ctx.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+      const r = (i % 2 === 0) ? outer : inner;
+      const a = (Math.PI / points) * i - Math.PI / 2;
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
   }
 
   function drawTerritoryFlag(id) {
@@ -696,8 +764,10 @@
         dayAccum -= 1;
       }
       updateHUD();
-      render();
+      if (state.selected) updateCountryPanel();
     }
+    tickEffects();
+    render();
     requestAnimationFrame(loop);
   }
 
@@ -835,6 +905,8 @@
       const remaining = Math.max(20, Math.round((atkRoll - defRoll) / atkMult * 0.6));
       tgt.owner = state.player;
       tgt.troops = remaining;
+      const tc = COUNTRIES[tgtId];
+      addEffect({ type: 'conquest', x: tc.cx, y: tc.cy, rgb: '255,215,0', ttl: 70 });
       log(`Conquered ${COUNTRIES[tgtId].name}! ${remaining} troops occupy.`, 'good');
     } else {
       const survivors = Math.max(30, Math.round((defRoll - atkRoll * 0.7) / 1.25));
