@@ -1,5 +1,7 @@
-// You Are Domynator - Task 1: foundations + static political map
-// Subsequent tasks will add: time loop, views, combat, research, AI, polish.
+// You Are Domynator - Tasks 1-2
+// T1: foundations + static political map
+// T2: time loop, alt map views, HUD, monthly income/research
+// Upcoming: combat, research effects, AI, polish.
 
 (function () {
   'use strict';
@@ -12,8 +14,26 @@
     selected: null,              // country id
     target: null,                // adjacent enemy country id (set on Task 3)
     cstate: {},                  // per-country dynamic state: { owner, troops }
-    mouse: { x: 0, y: 0, on: null }
+    mouse: { x: 0, y: 0, on: null },
+    // Task 2: time, resources
+    date: { year: 2026, month: 1, day: 1 },
+    speed: 1,                    // 0 paused, 1, 2, 5
+    money: 0,
+    research: 0,
+    tech: { drones: 0, robots: 0, nukes: 0 },
+    nukeStock: 0,
+    log: []
   };
+
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function daysInMonth(y, m) {
+    const d = [31,28,31,30,31,30,31,31,30,31,30,31];
+    if (m === 2 && ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0)) return 29;
+    return d[m - 1];
+  }
+
+  // Precomputed ranges (filled at start)
+  let GDP_MAX = 1, POP_MAX = 1;
 
   // ---------- Boot: nation picker ----------
   const picker = document.getElementById('nation-pick');
@@ -37,10 +57,30 @@
     for (const id in COUNTRIES) {
       state.cstate[id] = { owner: id, troops: COUNTRIES[id].troops };
     }
+    state.date = { year: 2026, month: 1, day: 1 };
+    state.speed = 1;
+    state.money = 500;
+    state.research = 0;
+    state.tech = { drones: 0, robots: 0, nukes: 0 };
+    state.nukeStock = 0;
+    state.log = [];
+
+    // Compute heatmap ranges
+    GDP_MAX = 1; POP_MAX = 1;
+    for (const id in COUNTRIES) {
+      if (COUNTRIES[id].gdp > GDP_MAX) GDP_MAX = COUNTRIES[id].gdp;
+      if (COUNTRIES[id].pop > POP_MAX) POP_MAX = COUNTRIES[id].pop;
+    }
+
     document.getElementById('start-screen').classList.add('hidden');
     document.getElementById('game-root').classList.remove('hidden');
     fitCanvas();
+    log(`${COUNTRIES[playerId].name} rises. Conquer the world.`, 'good');
+    updateLegend();
+    updateHUD();
+    updateCountryPanel();
     render();
+    startLoop();
   }
 
   // ---------- Canvas sizing ----------
@@ -217,16 +257,54 @@
 
   function drawCountryFill(id) {
     const c = COUNTRIES[id];
-    const cs = state.cstate[id];
-    const owner = COUNTRIES[cs.owner];
-    let fill = owner.color;
-    if (cs.owner === state.player) {
-      fill = brighten(owner.color, 0.15);
-    }
     ctx.beginPath();
     pathPolygon(c.polygon);
-    ctx.fillStyle = fill;
+    ctx.fillStyle = fillForCountry(id);
     ctx.fill();
+  }
+
+  function fillForCountry(id) {
+    const c = COUNTRIES[id];
+    const cs = state.cstate[id];
+    const owner = COUNTRIES[cs.owner];
+    if (state.view === 'political') {
+      return cs.owner === state.player ? brighten(owner.color, 0.2) : owner.color;
+    }
+    if (state.view === 'economy') {
+      return heatmap(c.gdp, GDP_MAX, ['#0a2e1a', '#1f7a3f', '#9bd96b', '#fff59c']);
+    }
+    if (state.view === 'population') {
+      return heatmap(c.pop, POP_MAX, ['#0a1a3e', '#1e3a8a', '#3b82f6', '#bfdbfe']);
+    }
+    if (state.view === 'oil') {
+      return heatmap(c.oil, 100, ['#1a0a0a', '#5a2010', '#a83a10', '#f59e0b']);
+    }
+    if (state.view === 'diplomacy') {
+      if (cs.owner === state.player) return '#22c55e';
+      // Wars in Task 3; for now non-player territory is neutral
+      return '#475569';
+    }
+    return owner.color;
+  }
+
+  function heatmap(value, max, stops) {
+    const t = Math.min(1, Math.log10(1 + Math.max(0, value)) / Math.log10(1 + max));
+    const seg = t * (stops.length - 1);
+    const i = Math.min(stops.length - 2, Math.floor(seg));
+    return mixColor(stops[i], stops[i + 1], seg - i);
+  }
+
+  function parseHex(hex) {
+    const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex);
+    return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+  }
+
+  function mixColor(a, b, t) {
+    const pa = parseHex(a), pb = parseHex(b);
+    const r = Math.round(pa[0] + (pb[0] - pa[0]) * t);
+    const g = Math.round(pa[1] + (pb[1] - pa[1]) * t);
+    const bl = Math.round(pa[2] + (pb[2] - pa[2]) * t);
+    return `rgb(${r},${g},${bl})`;
   }
 
   function drawCountryBorder(id) {
@@ -340,25 +418,156 @@
     return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('');
   }
 
-  // ---------- View tabs (placeholder for Task 2) ----------
+  // ---------- View tabs ----------
   document.querySelectorAll('.view-tabs button').forEach(b => {
     b.addEventListener('click', () => {
       document.querySelectorAll('.view-tabs button').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
       state.view = b.dataset.view;
-      // Heatmap views land in Task 2; for now just re-render political.
+      updateLegend();
       render();
     });
   });
 
-  // ---------- Stub controls (real behavior in later tasks) ----------
+  // ---------- Speed ----------
   document.querySelectorAll('.speed button').forEach(b => {
     b.addEventListener('click', () => {
       document.querySelectorAll('.speed button').forEach(x => x.classList.remove('active'));
       b.classList.add('active');
+      state.speed = parseInt(b.dataset.speed, 10);
     });
   });
 
+  // ---------- Game loop ----------
+  let lastFrame = 0;
+  let dayAccum = 0;
+  function startLoop() {
+    lastFrame = performance.now();
+    requestAnimationFrame(loop);
+  }
+  function loop(ts) {
+    if (!state.started) return;
+    const dt = ts - lastFrame;
+    lastFrame = ts;
+    if (state.speed > 0) {
+      // 1x = 2 days/sec, 2x = 4 days/sec, 5x = 10 days/sec
+      const daysPerSec = state.speed * 2;
+      dayAccum += (dt / 1000) * daysPerSec;
+      while (dayAccum >= 1) {
+        advanceDay();
+        dayAccum -= 1;
+      }
+      updateHUD();
+      render();
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function advanceDay() {
+    const d = state.date;
+    d.day += 1;
+    if (d.day > daysInMonth(d.year, d.month)) {
+      d.day = 1;
+      d.month += 1;
+      if (d.month > 12) { d.month = 1; d.year += 1; }
+      advanceMonth();
+    }
+  }
+
+  function advanceMonth() {
+    let income = 0, research = 0;
+    for (const id in state.cstate) {
+      if (state.cstate[id].owner !== state.player) continue;
+      const c = COUNTRIES[id];
+      income += c.gdp * 0.04 + c.oil * 1.5 + c.pop * 0.4;
+      research += 1 + c.gdp / 1500;
+    }
+    income = Math.round(income);
+    research = Math.round(research * 10) / 10;
+    state.money += income;
+    state.research += research;
+    if (state.selected) updateCountryPanel();
+    log(`${MONTHS[state.date.month - 1]} ${state.date.year}: +$${income}  +${research} research`);
+  }
+
+  // ---------- HUD ----------
+  function updateHUD() {
+    const d = state.date;
+    document.getElementById('hud-date').textContent =
+      `${MONTHS[d.month - 1]} ${String(d.day).padStart(2, '0')}, ${d.year}`;
+    document.getElementById('hud-money').textContent = state.money.toLocaleString();
+    document.getElementById('hud-research').textContent = state.research.toFixed(1);
+    let troops = 0;
+    for (const id in state.cstate) {
+      if (state.cstate[id].owner === state.player) troops += state.cstate[id].troops;
+    }
+    document.getElementById('hud-troops').textContent = troops.toLocaleString();
+    const t = territoryStats();
+    document.getElementById('hud-territory').textContent = t.pct.toFixed(1) + '%';
+  }
+
+  function territoryStats() {
+    const initialId = state.player;
+    const initialArea = COUNTRIES[initialId].area;
+    let owned = 0, conquered = 0;
+    for (const id in state.cstate) {
+      if (state.cstate[id].owner === state.player) {
+        owned += COUNTRIES[id].area;
+        if (id !== initialId) conquered += COUNTRIES[id].area;
+      }
+    }
+    const conquerable = TOTAL_AREA - initialArea;
+    return {
+      pct: conquerable > 0 ? (conquered / conquerable) * 100 : 0,
+      ownedArea: owned,
+      conquered, conquerable
+    };
+  }
+
+  // ---------- Legend ----------
+  function updateLegend() {
+    const el = document.getElementById('legend');
+    const sw = (c, label) => `<div><span class="swatch" style="background:${c}"></span>${label}</div>`;
+    let html = '';
+    if (state.view === 'political') {
+      html = `<div><b>Political</b></div>` +
+        sw('#ffd700', 'Your nation (gold capital)') +
+        sw('#888', 'Other nations (national colors)');
+    } else if (state.view === 'economy') {
+      html = `<div><b>GDP (log)</b></div>` +
+        sw('#0a2e1a', 'Low') + sw('#1f7a3f', 'Mid') +
+        sw('#9bd96b', 'High') + sw('#fff59c', 'Top');
+    } else if (state.view === 'population') {
+      html = `<div><b>Population (log)</b></div>` +
+        sw('#0a1a3e', 'Low') + sw('#1e3a8a', 'Mid') +
+        sw('#3b82f6', 'High') + sw('#bfdbfe', 'Top');
+    } else if (state.view === 'oil') {
+      html = `<div><b>Oil reserves</b></div>` +
+        sw('#1a0a0a', 'None') + sw('#5a2010', 'Low') +
+        sw('#a83a10', 'High') + sw('#f59e0b', 'Major');
+    } else if (state.view === 'diplomacy') {
+      html = `<div><b>Diplomacy</b></div>` +
+        sw('#22c55e', 'Your territory') +
+        sw('#475569', 'Neutral / not at war');
+    }
+    el.innerHTML = html;
+  }
+
+  // ---------- Log ----------
+  function log(text, kind) {
+    state.log.unshift({ text, kind, ts: `${MONTHS[state.date.month - 1]} ${state.date.day}` });
+    if (state.log.length > 100) state.log.length = 100;
+    const ul = document.getElementById('log');
+    if (!ul) return;
+    ul.innerHTML = state.log.slice(0, 30).map(e =>
+      `<li class="${e.kind || ''}"><span class="ts">${e.ts}</span>${escapeHtml(e.text)}</li>`
+    ).join('');
+  }
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, ch =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
+  }
+
   // Expose minimal hooks for future tasks
-  window.__game = { state, render };
+  window.__game = { state, render, log };
 })();
